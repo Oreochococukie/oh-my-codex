@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'child_process';
-import { mkdtemp, rm, writeFile, readFile, mkdir, chmod, readdir } from 'fs/promises';
+import { mkdtemp, rm, unlink, writeFile, readFile, mkdir, chmod, readdir } from 'fs/promises';
 import { join, relative, dirname } from 'path';
 import { tmpdir } from 'os';
 import { existsSync } from 'fs';
@@ -7614,6 +7614,31 @@ exec "${realGit}" "$@"
       await markDetachedSessionAbsent(teamName, cwd);
       await writeFile(join(cwd, '.omx', 'state', 'mailbox.json'), JSON.stringify({ records: 'malformed' }));
       process.env.OMX_RUNTIME_BRIDGE = '1';
+
+      await assert.rejects(
+        shutdownWithoutTmuxSession(teamName, cwd),
+        /authoritative_mailbox_retirement_discovery_failed/,
+      );
+      assert.equal(existsSync(join(cwd, '.omx', 'state', 'team', teamName)), true);
+    } finally {
+      if (typeof previousRuntimeBridge === 'string') process.env.OMX_RUNTIME_BRIDGE = previousRuntimeBridge;
+      else delete process.env.OMX_RUNTIME_BRIDGE;
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('shutdownTeam preserves Team state when mailbox compatibility output is absent', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-shutdown-mailbox-missing-'));
+    const previousRuntimeBridge = process.env.OMX_RUNTIME_BRIDGE;
+    const teamName = 'shutdown-mailbox-missing';
+    try {
+      process.env.OMX_RUNTIME_BRIDGE = '0';
+      await initTeamState(teamName, 'shutdown mailbox missing test', 'executor', 1, cwd);
+      await sendDirectMessage(teamName, 'leader-fixed', 'worker-1', 'pending result', cwd);
+      await writeFile(join(cwd, '.omx', 'state', 'mailbox.json'), JSON.stringify({ records: [] }));
+      await unlink(join(cwd, '.omx', 'state', 'mailbox.json'));
+      process.env.OMX_RUNTIME_BRIDGE = '1';
+      await markDetachedSessionAbsent(teamName, cwd);
 
       await assert.rejects(
         shutdownWithoutTmuxSession(teamName, cwd),

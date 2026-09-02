@@ -2454,12 +2454,16 @@ export async function retireTeamMailboxMessages(
         const bridge = getDefaultBridge(stateDir);
         const compatPath = join(stateDir, 'mailbox.json');
         const compat = bridge.readCompatFile<{ records?: unknown[] }>('mailbox.json');
-        if (existsSync(compatPath) && !Array.isArray(compat?.records)) {
+        if (!existsSync(compatPath) || !Array.isArray(compat?.records)) {
           throw new Error('authoritative_mailbox_retirement_discovery_failed');
         }
-        const bridgeIds = new Set(bridge.readMailboxRecords().map((record) => record.message_id));
+        const bridgeRecords = bridge.readMailboxRecords();
+        const bridgeIds = new Set(bridgeRecords.map((record) => record.message_id));
+        const unproven = pending.filter((message) => !bridgeIds.has(message.message_id));
+        if (unproven.length > 0) {
+          throw new Error(`authoritative_mailbox_retirement_discovery_failed:${unproven.map((message) => message.message_id).join(',')}`);
+        }
         for (const message of pending) {
-          if (!bridgeIds.has(message.message_id)) continue;
           const event = bridge.execCommand({ command: 'MarkMailboxDelivered', message_id: message.message_id });
           if (event.event !== 'MailboxDelivered' || event.message_id !== message.message_id) {
             throw new Error(`authoritative_mailbox_retirement_failed:${message.message_id}`);

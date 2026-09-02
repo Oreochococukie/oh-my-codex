@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, rm, writeFile, readFile, mkdir, open, rename, utimes, symlink } from 'fs/promises';
+import { chmod, mkdtemp, rm, unlink, writeFile, readFile, mkdir, open, rename, utimes, symlink } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { existsSync, readFileSync } from 'fs';
@@ -1966,6 +1966,39 @@ exit 1
       };
       assert.equal(typeof compat.records.find((record) => record.message_id === message.message_id)?.delivered_at, 'string');
       assert.match(await readFile(runtimeLogPath, 'utf8'), /MarkMailboxDelivered/);
+    } finally {
+      if (typeof previousRuntimeBinary === 'string') process.env.OMX_RUNTIME_BINARY = previousRuntimeBinary;
+      else delete process.env.OMX_RUNTIME_BINARY;
+      if (typeof previousRuntimeBridge === 'string') process.env.OMX_RUNTIME_BRIDGE = previousRuntimeBridge;
+      else delete process.env.OMX_RUNTIME_BRIDGE;
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when authoritative mailbox compatibility output is absent', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-team-mailbox-retire-missing-compat-'));
+    const previousRuntimeBinary = process.env.OMX_RUNTIME_BINARY;
+    const previousRuntimeBridge = process.env.OMX_RUNTIME_BRIDGE;
+    const teamName = 'team-retire-missing-compat';
+    try {
+      await initTeamState(teamName, 't', 'executor', 1, cwd);
+      const fakeBinDir = join(cwd, 'fake-bin');
+      const runtimeLogPath = join(cwd, 'runtime.log');
+      await mkdir(fakeBinDir, { recursive: true });
+      await writeCompatRuntimeFixture(join(fakeBinDir, 'omx-runtime'), runtimeLogPath);
+      process.env.OMX_RUNTIME_BINARY = join(fakeBinDir, 'omx-runtime');
+      process.env.OMX_RUNTIME_BRIDGE = '1';
+      const message = await sendDirectMessage(teamName, 'leader-fixed', 'worker-1', 'pending', cwd);
+      const compatPath = join(cwd, '.omx', 'state', 'mailbox.json');
+      await unlink(compatPath);
+
+      await assert.rejects(
+        retireTeamMailboxMessages(teamName, ['worker-1'], cwd),
+        /authoritative_mailbox_retirement_discovery_failed/,
+      );
+      const shadow = await listMailboxMessages(teamName, 'worker-1', cwd);
+      assert.equal(shadow.find((entry) => entry.message_id === message.message_id)?.delivered_at, undefined);
+      assert.doesNotMatch(await readFile(runtimeLogPath, 'utf8'), /MarkMailboxDelivered/);
     } finally {
       if (typeof previousRuntimeBinary === 'string') process.env.OMX_RUNTIME_BINARY = previousRuntimeBinary;
       else delete process.env.OMX_RUNTIME_BINARY;
