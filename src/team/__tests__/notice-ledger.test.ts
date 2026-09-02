@@ -67,13 +67,16 @@ describe('team notice ledger', () => {
     const { root, stateRoot } = await fixture();
     try {
       await Promise.all([liveTeam(stateRoot, 'live'), liveTeam(stateRoot, 'terminal'), liveTeam(stateRoot, 'removed')]);
-      await writeFile(join(stateRoot, 'team', 'terminal', 'phase.json'), JSON.stringify({ current_phase: 'complete' }));
+      await writeFile(join(stateRoot, 'team', 'terminal', 'phase.json'), JSON.stringify({ current_phase: 'team-exec', terminal_epoch: '2026-09-02T00:00:00.000Z' }));
       const targetId = 'leader';
-      for (const name of ['live', 'terminal', 'removed']) await registerTeamNotice(registration(stateRoot, name, targetId, '1'));
+      const terminal = await registerTeamNotice(registration(stateRoot, 'terminal', targetId, '1'));
+      assert.equal(terminal.queued, false);
+      await registerTeamNotice(registration(stateRoot, 'live', targetId, '1'));
+      await registerTeamNotice(registration(stateRoot, 'removed', targetId, '1'));
       await rm(join(stateRoot, 'team', 'removed'), { recursive: true, force: true });
       const result = await reconcileTeamNoticeLedger({ stateRoot, targetKey: teamNoticeTargetKey(targetId) });
       assert.deepEqual(result.context.map((notice) => notice.teamName), ['live']);
-      assert.equal(result.discarded, 2);
+      assert.equal(result.discarded, 1);
       assert.doesNotMatch(await readFile(teamNoticeLedgerPath(stateRoot), 'utf8'), /terminal|removed/);
     } finally { await rm(root, { recursive: true, force: true }); }
   });

@@ -218,6 +218,9 @@ export async function registerTeamNotice(registration: TeamNoticeRegistration): 
   return await withLedgerLock(stateRoot, async () => {
     const ledger = await readLedger(stateRoot);
     const targetKey = teamNoticeTargetKey(registration.targetId);
+    if (!await teamIsLive(stateRoot, registration.teamName)) {
+      return { generation, queued: false, prompt: null, targetKey, wakeId: null };
+    }
     // A later source-proven event confirms the previous presented batch reached a model turn.
     for (const [key, notice] of Object.entries(ledger.notices)) {
       if (notice.targetKey === targetKey && notice.presentedAt) delete ledger.notices[key];
@@ -309,8 +312,12 @@ async function teamIsLive(stateRoot: string, teamName: string): Promise<boolean>
     }
   }
   try {
-    const phase = JSON.parse(await readFile(join(teamDir, 'phase.json'), 'utf8')) as { current_phase?: unknown };
-    return !(typeof phase.current_phase === 'string' && TERMINAL_PHASES.has(phase.current_phase));
+    const phase = JSON.parse(await readFile(join(teamDir, 'phase.json'), 'utf8')) as {
+      current_phase?: unknown;
+      terminal_epoch?: unknown;
+    };
+    return phase.terminal_epoch === undefined
+      && !(typeof phase.current_phase === 'string' && TERMINAL_PHASES.has(phase.current_phase));
   } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
 }
 

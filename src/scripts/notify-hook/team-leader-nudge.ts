@@ -109,7 +109,7 @@ async function teamStateAllowsLeaderNudge(stateDir, teamName) {
 
   const phase = await readJsonIfExists(join(teamDir, 'phase.json'), null);
   const currentPhase = safeString(phase?.current_phase || phase?.phase || '').trim();
-  if (currentPhase && isTerminalPhase(currentPhase)) return false;
+  if (phase?.terminal_epoch || (currentPhase && isTerminalPhase(currentPhase))) return false;
 
   return true;
 }

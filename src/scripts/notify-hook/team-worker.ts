@@ -106,7 +106,7 @@ async function readTeamPhaseSnapshot(stateDir, teamName, nowIso = new Date().toI
     const currentPhase = safeString(parsed && parsed.current_phase).trim();
     return {
       currentPhase,
-      terminal: isTerminalPhase(currentPhase),
+      terminal: Boolean(parsed && parsed.terminal_epoch) || isTerminalPhase(currentPhase),
       completedAt: resolveTerminalAtFromPhaseDoc(parsed, nowIso),
     };
   } catch {
