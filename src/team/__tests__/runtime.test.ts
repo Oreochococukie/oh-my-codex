@@ -62,6 +62,7 @@ import { buildInternalTeamName, resolveTeamIdentityScope } from '../team-identit
 import { writePersistedApprovedTeamExecutionBinding } from '../approved-execution.js';
 import { planWorktreeTarget } from '../worktree.js';
 import { scaleDown } from '../scaling.js';
+import { registerTeamNotice, teamNoticeLedgerPath, teamNoticeTargetKey } from '../notice-ledger.js';
 
 const coverageRun = process.env.NODE_V8_COVERAGE ? true : false;
 const skipSlowLifecycleUnderCoverage = coverageRun
@@ -7559,6 +7560,69 @@ exec "${realGit}" "$@"
       const teamRoot = join(cwd, '.omx', 'state', 'team', 'team-shutdown');
       assert.equal(existsSync(teamRoot), false);
     } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('shutdownTeam discards terminal Team notices before deleting ownership evidence', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-shutdown-notices-'));
+    const previousRuntimeBridge = process.env.OMX_RUNTIME_BRIDGE;
+    try {
+      process.env.OMX_RUNTIME_BRIDGE = '0';
+      await initTeamState('team-shutdown-notices', 'shutdown notice cleanup test', 'executor', 1, cwd);
+      await markDetachedSessionAbsent('team-shutdown-notices', cwd);
+      const notice = await registerTeamNotice({
+        cwd,
+        targetId: 'leader-pane-owner',
+        teamName: 'team-shutdown-notices',
+        noticeClass: 'terminal',
+        generation: 'done',
+        source: { kind: 'test' },
+      });
+      assert.equal(notice.targetKey, teamNoticeTargetKey('leader-pane-owner'));
+
+      await shutdownWithoutTmuxSession('team-shutdown-notices', cwd);
+
+      const ledger = JSON.parse(await readFile(teamNoticeLedgerPath(join(cwd, '.omx', 'state')), 'utf8')) as {
+        notices: Record<string, { teamName: string }>;
+        wakes: Record<string, unknown>;
+      };
+      assert.equal(Object.values(ledger.notices).some((entry) => entry.teamName === 'team-shutdown-notices'), false);
+      assert.equal(ledger.wakes[notice.targetKey], undefined);
+      assert.equal(existsSync(join(cwd, '.omx', 'state', 'team', 'team-shutdown-notices')), false);
+    } finally {
+      if (typeof previousRuntimeBridge === 'string') process.env.OMX_RUNTIME_BRIDGE = previousRuntimeBridge;
+      else delete process.env.OMX_RUNTIME_BRIDGE;
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('shutdownTeam preserves Team state when global mailbox retirement cannot be proven', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-shutdown-mailbox-fail-closed-'));
+    const previousRuntimeBridge = process.env.OMX_RUNTIME_BRIDGE;
+    const teamName = 'shutdown-mailbox-fail-closed';
+    try {
+      process.env.OMX_RUNTIME_BRIDGE = '0';
+      await initTeamState(teamName, 'shutdown mailbox cleanup test', 'executor', 1, cwd);
+      await sendDirectMessage(
+        teamName,
+        'leader-fixed',
+        'worker-1',
+        'pending result',
+        cwd,
+      );
+      await markDetachedSessionAbsent(teamName, cwd);
+      await writeFile(join(cwd, '.omx', 'state', 'mailbox.json'), JSON.stringify({ records: 'malformed' }));
+      process.env.OMX_RUNTIME_BRIDGE = '1';
+
+      await assert.rejects(
+        shutdownWithoutTmuxSession(teamName, cwd),
+        /authoritative_mailbox_retirement_discovery_failed/,
+      );
+      assert.equal(existsSync(join(cwd, '.omx', 'state', 'team', teamName)), true);
+    } finally {
+      if (typeof previousRuntimeBridge === 'string') process.env.OMX_RUNTIME_BRIDGE = previousRuntimeBridge;
+      else delete process.env.OMX_RUNTIME_BRIDGE;
       await rm(cwd, { recursive: true, force: true });
     }
   });

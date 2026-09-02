@@ -2179,6 +2179,13 @@ export async function removeDispatchRequestsForWorkers(
     if (isBridgeEnabled()) {
       const stateDir = resolveBridgeStateDir(cwd);
       const bridge = getDefaultBridge(stateDir);
+      const compat = bridge.readCompatFile<{ records?: unknown[] }>('dispatch.json');
+      const compatPath = join(stateDir, 'dispatch.json');
+      if (legacyRequestIds.length === 0
+        && (!existsSync(compatPath) || (Array.isArray(compat?.records) && compat.records.length === 0))) {
+        await writeAtomic(dispatchRequestsPath(teamName, cwd), JSON.stringify(requests, null, 2));
+        return;
+      }
       const snapshot = bridge.execCommand({ command: 'CaptureSnapshot' });
       if (snapshot.event !== 'SnapshotCaptured') {
         throw new Error(`authoritative_dispatch_rollback_discovery_failed:${[...names].join(',')}`);
@@ -2417,6 +2424,60 @@ export async function listMailboxMessages(
     appendTeamEvent,
     readTeamConfig,
   });
+}
+
+/** Retire only mailbox messages proven by this Team's per-target compatibility shadows. */
+export async function retireTeamMailboxMessages(
+  teamName: string,
+  workerNames: readonly string[],
+  cwd: string,
+): Promise<number> {
+  let retired = 0;
+  const targets = new Set(workerNames);
+  try {
+    for (const entry of await readdir(join(teamDir(teamName, cwd), 'mailbox'))) {
+      if (!entry.endsWith('.json')) continue;
+      const workerName = entry.slice(0, -'.json'.length);
+      if (WORKER_NAME_SAFE_PATTERN.test(workerName)) targets.add(workerName);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  for (const workerName of targets) {
+    await withMailboxLock(teamName, workerName, cwd, async () => {
+      const mailbox = await readLegacyMailbox(teamName, workerName, cwd);
+      const pending = mailbox.messages.filter((message) => !message.delivered_at);
+      if (pending.length === 0) return;
+
+      if (isBridgeEnabled()) {
+        const stateDir = resolveBridgeStateDir(cwd);
+        const bridge = getDefaultBridge(stateDir);
+        const compatPath = join(stateDir, 'mailbox.json');
+        const compat = bridge.readCompatFile<{ records?: unknown[] }>('mailbox.json');
+        if (existsSync(compatPath) && !Array.isArray(compat?.records)) {
+          throw new Error('authoritative_mailbox_retirement_discovery_failed');
+        }
+        const bridgeIds = new Set(bridge.readMailboxRecords().map((record) => record.message_id));
+        for (const message of pending) {
+          if (!bridgeIds.has(message.message_id)) continue;
+          const event = bridge.execCommand({ command: 'MarkMailboxDelivered', message_id: message.message_id });
+          if (event.event !== 'MailboxDelivered' || event.message_id !== message.message_id) {
+            throw new Error(`authoritative_mailbox_retirement_failed:${message.message_id}`);
+          }
+          const verified = bridge.readMailboxRecords().find((record) => record.message_id === message.message_id);
+          if (!verified?.delivered_at) {
+            throw new Error(`authoritative_mailbox_retirement_verification_failed:${message.message_id}`);
+          }
+        }
+      }
+
+      const deliveredAt = new Date().toISOString();
+      for (const message of pending) message.delivered_at = deliveredAt;
+      await writeMailbox(teamName, mailbox, cwd);
+      retired += pending.length;
+    });
+  }
+  return retired;
 }
 
 export async function writeTaskApproval(

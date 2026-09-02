@@ -24,7 +24,7 @@ import { readLatestTeamProgressEvidenceMs } from '../../team/progress-evidence.j
 import { validateSessionId } from '../../mcp/state-paths.js';
 import { TEAM_NAME_SAFE_PATTERN } from '../../team/contracts.js';
 import { isDeepInterviewStateActive } from './auto-nudge.js';
-import { registerTeamNotice, releaseTeamNoticeWake } from '../../team/notice-ledger.js';
+import { confirmTeamNoticeWake, registerTeamNotice, releaseTeamNoticeWake } from '../../team/notice-ledger.js';
 const LEADER_PANE_MISSING_NO_INJECTION_REASON = 'leader_pane_missing_no_injection';
 const LEADER_PANE_SHELL_NO_INJECTION_REASON = 'leader_pane_shell_no_injection';
 const TEAM_SHUTDOWN_NO_INJECTION_REASON = 'team_state_gone_or_shutdown';
@@ -1236,6 +1236,10 @@ export async function maybeNudgeTeamLeader({
         });
         if (!sendResult.ok) {
           throw new Error(sendResult.error || sendResult.reason);
+        }
+        if (queuedNoticeRegistration?.targetKey && queuedNoticeRegistration?.wakeId
+          && !await confirmTeamNoticeWake(stateDir, queuedNoticeRegistration.targetKey, queuedNoticeRegistration.wakeId)) {
+          throw new Error('team_notice_wake_confirmation_failed');
         }
         deliveryMode = 'queued';
         queuedNoticeRegistration = null;
