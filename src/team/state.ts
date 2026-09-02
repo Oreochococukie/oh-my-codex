@@ -2343,7 +2343,7 @@ export async function sendDirectMessage(
   body: string,
   cwd: string
 ): Promise<TeamMailboxMessage> {
-  return await sendDirectMessageImpl(fromWorker, toWorker, body, {
+  return await withTeamTaskBarrier(teamName, cwd, async () => await sendDirectMessageImpl(fromWorker, toWorker, body, {
     teamName,
     cwd,
     withMailboxLock,
@@ -2352,7 +2352,7 @@ export async function sendDirectMessage(
     writeMailbox,
     appendTeamEvent,
     readTeamConfig,
-  });
+  }));
 }
 
 export async function broadcastMessage(
@@ -2361,7 +2361,7 @@ export async function broadcastMessage(
   body: string,
   cwd: string
 ): Promise<TeamMailboxMessage[]> {
-  return await broadcastMessageImpl(fromWorker, body, {
+  return await withTeamTaskBarrier(teamName, cwd, async () => await broadcastMessageImpl(fromWorker, body, {
     teamName,
     cwd,
     withMailboxLock,
@@ -2370,7 +2370,7 @@ export async function broadcastMessage(
     writeMailbox,
     appendTeamEvent,
     readTeamConfig,
-  });
+  }));
 }
 
 export async function markMessageDelivered(
@@ -2458,6 +2458,16 @@ export async function retireTeamMailboxMessages(
           throw new Error('authoritative_mailbox_retirement_discovery_failed');
         }
         const bridgeRecords = bridge.readMailboxRecords();
+        if (bridgeRecords.some((record) => !record
+          || typeof record.message_id !== 'string'
+          || typeof record.from_worker !== 'string'
+          || typeof record.to_worker !== 'string'
+          || typeof record.body !== 'string'
+          || typeof record.created_at !== 'string'
+          || (record.notified_at !== null && typeof record.notified_at !== 'string')
+          || (record.delivered_at !== null && typeof record.delivered_at !== 'string'))) {
+          throw new Error('authoritative_mailbox_retirement_discovery_failed');
+        }
         const bridgeIds = new Set(bridgeRecords.map((record) => record.message_id));
         const unproven = pending.filter((message) => !bridgeIds.has(message.message_id));
         if (unproven.length > 0) {

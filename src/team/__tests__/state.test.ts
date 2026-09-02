@@ -2011,6 +2011,40 @@ exit 1
     }
   });
 
+  it('fails closed when a matching authoritative mailbox record is malformed', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-team-mailbox-retire-malformed-record-'));
+    const previousRuntimeBinary = process.env.OMX_RUNTIME_BINARY;
+    const previousRuntimeBridge = process.env.OMX_RUNTIME_BRIDGE;
+    try {
+      await initTeamState('team-retire-malformed-record', 't', 'executor', 1, cwd);
+      const fakeBinDir = join(cwd, 'fake-bin');
+      const runtimeLogPath = join(cwd, 'runtime.log');
+      await mkdir(fakeBinDir, { recursive: true });
+      await writeCompatRuntimeFixture(join(fakeBinDir, 'omx-runtime'), runtimeLogPath);
+      process.env.OMX_RUNTIME_BINARY = join(fakeBinDir, 'omx-runtime');
+      process.env.OMX_RUNTIME_BRIDGE = '1';
+      const message = await sendDirectMessage('team-retire-malformed-record', 'leader-fixed', 'worker-1', 'pending', cwd);
+      const compatPath = join(cwd, '.omx', 'state', 'mailbox.json');
+      const compat = JSON.parse(await readFile(compatPath, 'utf8')) as { records: Array<Record<string, unknown>> };
+      const record = compat.records.find((entry) => entry.message_id === message.message_id);
+      assert.ok(record);
+      record.body = null;
+      await writeFile(compatPath, JSON.stringify(compat, null, 2));
+
+      await assert.rejects(
+        retireTeamMailboxMessages('team-retire-malformed-record', ['worker-1'], cwd),
+        /authoritative_mailbox_retirement_discovery_failed/,
+      );
+      assert.equal((await readFile(runtimeLogPath, 'utf8')).split('MarkMailboxDelivered').length - 1, 0);
+    } finally {
+      if (typeof previousRuntimeBinary === 'string') process.env.OMX_RUNTIME_BINARY = previousRuntimeBinary;
+      else delete process.env.OMX_RUNTIME_BINARY;
+      if (typeof previousRuntimeBridge === 'string') process.env.OMX_RUNTIME_BRIDGE = previousRuntimeBridge;
+      else delete process.env.OMX_RUNTIME_BRIDGE;
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed when authoritative mailbox compatibility output is absent', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'omx-team-mailbox-retire-missing-compat-'));
     const previousRuntimeBinary = process.env.OMX_RUNTIME_BINARY;
