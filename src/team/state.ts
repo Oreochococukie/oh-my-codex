@@ -2464,9 +2464,12 @@ export async function retireTeamMailboxMessages(
           throw new Error(`authoritative_mailbox_retirement_discovery_failed:${unproven.map((message) => message.message_id).join(',')}`);
         }
         for (const message of pending) {
-          const event = bridge.execCommand({ command: 'MarkMailboxDelivered', message_id: message.message_id });
-          if (event.event !== 'MailboxDelivered' || event.message_id !== message.message_id) {
-            throw new Error(`authoritative_mailbox_retirement_failed:${message.message_id}`);
+          const authoritative = bridgeRecords.find((record) => record.message_id === message.message_id);
+          if (!authoritative?.delivered_at) {
+            const event = bridge.execCommand({ command: 'MarkMailboxDelivered', message_id: message.message_id });
+            if (event.event !== 'MailboxDelivered' || event.message_id !== message.message_id) {
+              throw new Error(`authoritative_mailbox_retirement_failed:${message.message_id}`);
+            }
           }
           const verified = bridge.readMailboxRecords().find((record) => record.message_id === message.message_id);
           if (!verified?.delivered_at) {
