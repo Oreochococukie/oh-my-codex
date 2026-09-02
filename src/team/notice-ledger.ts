@@ -218,7 +218,7 @@ export async function registerTeamNotice(registration: TeamNoticeRegistration): 
   return await withLedgerLock(stateRoot, async () => {
     const ledger = await readLedger(stateRoot);
     const targetKey = teamNoticeTargetKey(registration.targetId);
-    if (!await teamIsLive(stateRoot, registration.teamName)) {
+    if (!await teamAllowsNoticeRegistration(stateRoot, registration.teamName)) {
       return { generation, queued: false, prompt: null, targetKey, wakeId: null };
     }
     // A later source-proven event confirms the previous presented batch reached a model turn.
@@ -319,6 +319,28 @@ async function teamIsLive(stateRoot: string, teamName: string): Promise<boolean>
     return phase.terminal_epoch === undefined
       && !(typeof phase.current_phase === 'string' && TERMINAL_PHASES.has(phase.current_phase));
   } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
+}
+
+async function teamAllowsNoticeRegistration(stateRoot: string, teamName: string): Promise<boolean> {
+  const teamDir = join(stateRoot, 'team', teamName);
+  try {
+    if (!(await stat(teamDir)).isDirectory()) return false;
+  } catch { return false; }
+  for (const shutdownName of ['shutdown.json', 'shutdown']) {
+    try { await stat(join(teamDir, shutdownName)); return false; } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+    }
+  }
+  try {
+    const phase = JSON.parse(await readFile(join(teamDir, 'phase.json'), 'utf8')) as {
+      current_phase?: unknown;
+      terminal_epoch?: unknown;
+    };
+    return phase.terminal_epoch === undefined
+      && !(typeof phase.current_phase === 'string' && TERMINAL_PHASES.has(phase.current_phase));
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
 }
 
 export async function reconcileTeamNoticeLedger(options: ReconcileTeamNoticeOptions): Promise<ReconcileTeamNoticeResult> {
