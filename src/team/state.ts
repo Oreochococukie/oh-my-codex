@@ -2446,8 +2446,7 @@ export async function retireTeamMailboxMessages(
   for (const workerName of targets) {
     await withMailboxLock(teamName, workerName, cwd, async () => {
       const mailbox = await readLegacyMailbox(teamName, workerName, cwd);
-      const pending = mailbox.messages.filter((message) => !message.delivered_at);
-      if (pending.length === 0) return;
+      if (mailbox.messages.length === 0) return;
 
       if (isBridgeEnabled()) {
         const stateDir = resolveBridgeStateDir(cwd);
@@ -2469,13 +2468,19 @@ export async function retireTeamMailboxMessages(
           throw new Error('authoritative_mailbox_retirement_discovery_failed');
         }
         const bridgeIds = new Set(bridgeRecords.map((record) => record.message_id));
-        const unproven = pending.filter((message) => !bridgeIds.has(message.message_id));
+        const unproven = mailbox.messages.filter((message) => !message.delivered_at && !bridgeIds.has(message.message_id));
         if (unproven.length > 0) {
           throw new Error(`authoritative_mailbox_retirement_discovery_failed:${unproven.map((message) => message.message_id).join(',')}`);
         }
-        for (const message of pending) {
+        let changed = false;
+        let retiredFromAuthoritative = 0;
+        for (const message of mailbox.messages) {
           const authoritative = bridgeRecords.find((record) => record.message_id === message.message_id);
-          if (!authoritative?.delivered_at) {
+          if (!authoritative) continue;
+          if (authoritative.to_worker !== workerName) {
+            throw new Error(`authoritative_mailbox_retirement_discovery_failed:${message.message_id}`);
+          }
+          if (!authoritative.delivered_at) {
             const event = bridge.execCommand({ command: 'MarkMailboxDelivered', message_id: message.message_id });
             if (event.event !== 'MailboxDelivered' || event.message_id !== message.message_id) {
               throw new Error(`authoritative_mailbox_retirement_failed:${message.message_id}`);
@@ -2485,9 +2490,21 @@ export async function retireTeamMailboxMessages(
           if (!verified?.delivered_at) {
             throw new Error(`authoritative_mailbox_retirement_verification_failed:${message.message_id}`);
           }
+          if (!message.delivered_at) {
+            message.delivered_at = new Date().toISOString();
+            changed = true;
+            retiredFromAuthoritative += 1;
+          }
         }
+        if (changed) {
+          await writeMailbox(teamName, mailbox, cwd);
+          retired += retiredFromAuthoritative;
+        }
+        return;
       }
 
+      const pending = mailbox.messages.filter((message) => !message.delivered_at);
+      if (pending.length === 0) return;
       const deliveredAt = new Date().toISOString();
       for (const message of pending) message.delivered_at = deliveredAt;
       await writeMailbox(teamName, mailbox, cwd);
