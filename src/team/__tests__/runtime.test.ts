@@ -904,15 +904,19 @@ async function withNativeWindowsPlatform<T>(run: () => Promise<T>): Promise<T> {
 }
 
 const ORIGINAL_OMX_TEAM_STATE_ROOT = process.env.OMX_TEAM_STATE_ROOT;
+const ORIGINAL_OMX_RUNTIME_BRIDGE = process.env.OMX_RUNTIME_BRIDGE;
 
 beforeEach(() => {
   delete process.env.OMX_TEAM_STATE_ROOT;
+  process.env.OMX_RUNTIME_BRIDGE = '0';
 });
 
 afterEach(() => {
   setTerminalEpochStartedHookForTest(null);
   if (typeof ORIGINAL_OMX_TEAM_STATE_ROOT === 'string') process.env.OMX_TEAM_STATE_ROOT = ORIGINAL_OMX_TEAM_STATE_ROOT;
   else delete process.env.OMX_TEAM_STATE_ROOT;
+  if (typeof ORIGINAL_OMX_RUNTIME_BRIDGE === 'string') process.env.OMX_RUNTIME_BRIDGE = ORIGINAL_OMX_RUNTIME_BRIDGE;
+  else delete process.env.OMX_RUNTIME_BRIDGE;
 });
 
 describe('runtime', () => {
